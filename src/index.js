@@ -4,6 +4,9 @@ const fs = require("fs");
 const mime = require("mime-types");
 const handlebars = require("handlebars");
 const compare = require("natural-compare");
+const zlib = require("zlib");
+const compressible = require("compressible");
+const accepts = require("accepts");
 
 const defaultConf = require("./config");
 
@@ -75,12 +78,43 @@ class StaticServer {
               const html = template({ list });
               res.end(html);
             } else {
-              res.writeHead(200, {
-                "content-type": `${mime.contentType(
-                  path.extname(url)
-                )};charset:utf8`,
-              });
-              fs.createReadStream(filePath).pipe(res);
+              const contentType = mime.contentType(path.extname(url));
+              let compression;
+
+              // 判断模块是否需要压缩
+              if (compressible(contentType)) {
+                const encodings = accepts(req).encodings();
+                console.log(encodings);
+                const serverCompatibleCompressions = [
+                  { method: "gzip", stream: zlib.createGzip() },
+                  { method: "deflate", stream: zlib.createDeflate() },
+                  { method: "br", stream: zlib.createBrotliCompress() },
+                ];
+
+                for (let i = 0; i < encodings.length; i++) {
+                  compression = serverCompatibleCompressions.find(
+                    (com) => com.method === encodings[i]
+                  );
+                  if (compression) {
+                    break;
+                  }
+                }
+              }
+
+              if (compression) {
+                res.writeHead(200, {
+                  "Content-Type": `${contentType};charset:utf8`,
+                  "Content-Encoding": compression.method,
+                });
+                fs.createReadStream(filePath)
+                  .pipe(compression.stream)
+                  .pipe(res);
+              } else {
+                res.writeHead(200, {
+                  "Content-Type": `${contentType};charset:utf8`,
+                });
+                fs.createReadStream(filePath).pipe(res);
+              }
             }
           }
         });
